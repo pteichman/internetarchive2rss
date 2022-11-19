@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+
+import argparse
+import datetime
+import internetarchive
+import podgen
+import pytz
+import re
+import sys
+import urllib.parse
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="internetarchive2rss",
+        description="Make a podcast feed from an Internet Archive item",
+    )
+
+    parser.add_argument("--filename-regexp", default=".*")
+    parser.add_argument("--format-regexp", default="VBR MP3")
+    parser.add_argument("item_id", default="Internet Archive item id")
+
+    args = parser.parse_args()
+    filename_re = re.compile(args.filename_regexp)
+    format_re = re.compile(args.format_regexp)
+
+    item_id = args.item_id
+    item = internetarchive.get_item(item_id)
+    allfiles = internetarchive.get_files(item_id)
+
+    imagematch = lambda item: item.format == "JPEG"
+
+    filematch = lambda item: filename_re.search(item.name) and format_re.search(
+        item.format
+    )
+
+    allfiles = internetarchive.get_files(item_id)
+    image = next(filter(imagematch, allfiles))
+
+    podcast = podgen.Podcast(
+        name=item.metadata.get("title", item_id),
+        website="https://archive.org/details/" + item_id,
+        description=item.metadata.get("title"),
+        image=image.url,
+        explicit=False,
+    )
+
+    files = list(filter(filematch, allfiles))
+    files.reverse()
+
+    date = item.metadata["publicdate"]
+    curtime = datetime.datetime.fromisoformat(date).astimezone(pytz.UTC)
+
+    for file in files:
+        filename_pos = file.url.rindex("/") + 1
+        filename = urllib.parse.unquote(file.url[filename_pos:])
+
+        episode = podgen.Episode(
+            title=filename,
+            media=podgen.Media(file.url, file.size),
+            publication_date=curtime,
+        )
+
+        curtime = curtime - datetime.timedelta(days=1)
+
+        podcast.episodes.append(episode)
+
+    sys.stdout.write(podcast.rss_str())
+
+
+if __name__ == "__main__":
+    main()
